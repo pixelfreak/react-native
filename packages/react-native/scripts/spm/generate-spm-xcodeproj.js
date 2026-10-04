@@ -23,6 +23,7 @@
 
 const {
   BUILTIN_FRAMEWORKS,
+  FLAVORED_FRAMEWORKS_MANIFEST,
   readFlavoredFrameworksManifest,
   readPluginFrameworks,
 } = require('./flavored-frameworks');
@@ -2285,10 +2286,20 @@ function pbxListValues(list /*: string */) /*: Array<string> */ {
  * machine with the plugin frameworks the injected project links. Only `spm
  * add` / `spm update` change what the project links, so the build-time sync
  * reports a mismatch instead of fixing it: one `error:` line per framework,
- * then PluginFrameworkMismatchError. Never writes the project.
+ * then PluginFrameworkMismatchError. Never writes the project. Checks the
+ * project Xcode is building (`PROJECT_FILE_PATH`) when it is injected.
  */
-function assertPluginFrameworksLinked(appRoot /*: string */) /*: void */ {
-  const xcodeprojPath = findInjectedXcodeproj(appRoot);
+function assertPluginFrameworksLinked(
+  appRoot /*: string */,
+  env /*: {+[string]: ?string} */ = process.env,
+) /*: void */ {
+  const builtProjectPath = env.PROJECT_FILE_PATH;
+  const xcodeprojPath =
+    builtProjectPath != null &&
+    builtProjectPath.endsWith('.xcodeproj') &&
+    fs.existsSync(path.join(builtProjectPath, SPM_INJECTED_MARKER))
+      ? builtProjectPath
+      : findInjectedXcodeproj(appRoot);
   const rootUuid =
     xcodeprojPath != null ? readMarker(xcodeprojPath)?.rootUuid : null;
   if (xcodeprojPath == null || rootUuid == null) {
@@ -2316,36 +2327,47 @@ function assertPluginFrameworksLinked(appRoot /*: string */) /*: void */ {
   const outputs = pbxListValues(
     findField(text, embedPhase, 'outputPaths')?.value ?? '',
   );
-  const builtinPrefixes = new Set(
-    BUILTIN_FRAMEWORKS.map(framework => frameworkSettingPrefix(framework.id)),
+  const linkedPrefixes = new Set(
+    inputs.map(input => /^\$\((RN_SPM_\w+)_FRAMEWORK\)$/.exec(input)?.[1]),
   );
-  const linkedPluginNames /*: Map<string, string> */ = new Map();
-  inputs
-    .map(input => /^\$\((RN_SPM_\w+)_FRAMEWORK\)$/.exec(input)?.[1])
-    .filter(Boolean)
-    .forEach((prefix, index) => {
-      if (!builtinPrefixes.has(prefix)) {
-        linkedPluginNames.set(
-          prefix,
-          path.basename(outputs[index] ?? prefix, '.framework'),
-        );
-      }
-    });
+  // Built-in framework names come from the staged manifest. Without it, only
+  // setting prefixes are compared: a missing manifest is not a plugin mismatch.
+  let linkedPluginNames /*: ?Set<string> */ = null;
+  if (
+    fs.existsSync(
+      path.join(appRoot, 'build', 'xcframeworks', FLAVORED_FRAMEWORKS_MANIFEST),
+    )
+  ) {
+    const builtinIds = new Set(BUILTIN_FRAMEWORKS.map(({id}) => id));
+    const builtinNames = new Set(
+      readFlavoredFrameworksManifest(appRoot)
+        .frameworks.filter(framework => builtinIds.has(framework.id))
+        .map(framework => framework.frameworkName),
+    );
+    linkedPluginNames = new Set(
+      outputs
+        .map(output => path.basename(output, '.framework'))
+        .filter(name => !builtinNames.has(name)),
+    );
+  }
 
   const pluginFrameworks = readPluginFrameworks(appRoot);
-  const pairedPrefixes = new Set(
-    pluginFrameworks.map(framework => frameworkSettingPrefix(framework.id)),
+  const pairedNames = new Set(
+    pluginFrameworks.map(framework => framework.frameworkName),
   );
   const problems /*: Array<string> */ = [];
   for (const {id, frameworkName} of pluginFrameworks) {
-    if (!linkedPluginNames.has(frameworkSettingPrefix(id))) {
+    if (
+      !linkedPrefixes.has(frameworkSettingPrefix(id)) ||
+      linkedPluginNames?.has(frameworkName) === false
+    ) {
       problems.push(
         `error: ${frameworkName} (${id}) is a precompiled framework from an autolinking plugin, but the Xcode project does not link it. Run \`npx react-native spm\` to update the project.`,
       );
     }
   }
-  for (const [prefix, frameworkName] of linkedPluginNames) {
-    if (!pairedPrefixes.has(prefix)) {
+  for (const frameworkName of linkedPluginNames ?? []) {
+    if (!pairedNames.has(frameworkName)) {
       problems.push(
         `error: The Xcode project links ${frameworkName}.framework, but no autolinking plugin provides it on this machine. Precompile ${frameworkName}, or run \`npx react-native spm\` to update the project.`,
       );

@@ -134,8 +134,21 @@ async function main(
     autolinkingArgv.push('--ios-deployment-target', iosDeploymentTarget);
   }
   deps.generateAutolinking(autolinkingArgv);
-  // Before the stamp, so every build fails until the project is updated.
-  deps.assertPluginFrameworksLinked(appRoot);
+  const stampPath = path.join(
+    appRoot,
+    'build',
+    'generated',
+    'autolinking',
+    '.spm-sync-stamp',
+  );
+  // Without a stamp every build re-runs sync and fails until the project is
+  // updated; an earlier stamp would let the next build skip it.
+  try {
+    deps.assertPluginFrameworksLinked(appRoot);
+  } catch (e) {
+    fs.rmSync(stampPath, {force: true});
+    throw e;
+  }
 
   // Rebuild the per-app generated-headers farm (vended as the ReactAppHeaders
   // SPM target inside the codegen package). React core headers need no trees
@@ -145,13 +158,6 @@ async function main(
   // so no path-locator JSON is written.
   deps.buildPerAppHeaderTree(appRoot, {log});
 
-  const stampPath = path.join(
-    appRoot,
-    'build',
-    'generated',
-    'autolinking',
-    '.spm-sync-stamp',
-  );
   fs.mkdirSync(path.dirname(stampPath), {recursive: true});
   fs.writeFileSync(stampPath, new Date().toISOString() + '\n', 'utf8');
   log('SPM autolinking sync complete.');

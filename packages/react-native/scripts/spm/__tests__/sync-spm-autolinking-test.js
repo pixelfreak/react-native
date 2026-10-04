@@ -152,4 +152,17 @@ describe('sync-spm-autolinking main', () => {
     );
     expect(fs.existsSync(stampPath())).toBe(false);
   });
+
+  it('removes an earlier stamp when plugin frameworks and the project disagree', async () => {
+    fs.mkdirSync(path.dirname(stampPath()), {recursive: true});
+    fs.writeFileSync(stampPath(), 'earlier sync\n');
+    const mismatch = new PluginFrameworkMismatchError();
+    const deps = makeDeps({
+      assertPluginFrameworksLinked: jest.fn(() => {
+        throw mismatch;
+      }),
+    });
+    await expect(run(deps)).rejects.toBe(mismatch);
+    expect(fs.existsSync(stampPath())).toBe(false);
+  });
 });

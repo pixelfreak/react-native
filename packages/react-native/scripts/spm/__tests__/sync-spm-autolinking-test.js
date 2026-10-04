@@ -137,9 +137,9 @@ describe('sync-spm-autolinking main', () => {
     expect(fs.existsSync(stampPath())).toBe(false);
   });
 
-  // No stamp on a mismatch, so the next build re-runs sync and fails again
-  // until the project is updated.
-  it('fails without a stamp when plugin frameworks and the project disagree', async () => {
+  it('fails and removes the stamp when plugin frameworks and the project disagree', async () => {
+    fs.mkdirSync(path.dirname(stampPath()), {recursive: true});
+    fs.writeFileSync(stampPath(), 'earlier sync\n');
     const mismatch = new PluginFrameworkMismatchError();
     const deps = makeDeps({
       assertPluginFrameworksLinked: jest.fn(() => {
@@ -150,19 +150,6 @@ describe('sync-spm-autolinking main', () => {
     expect(deps.generateAutolinking.mock.invocationCallOrder[0]).toBeLessThan(
       deps.assertPluginFrameworksLinked.mock.invocationCallOrder[0],
     );
-    expect(fs.existsSync(stampPath())).toBe(false);
-  });
-
-  it('removes an earlier stamp when plugin frameworks and the project disagree', async () => {
-    fs.mkdirSync(path.dirname(stampPath()), {recursive: true});
-    fs.writeFileSync(stampPath(), 'earlier sync\n');
-    const mismatch = new PluginFrameworkMismatchError();
-    const deps = makeDeps({
-      assertPluginFrameworksLinked: jest.fn(() => {
-        throw mismatch;
-      }),
-    });
-    await expect(run(deps)).rejects.toBe(mismatch);
     expect(fs.existsSync(stampPath())).toBe(false);
   });
 });

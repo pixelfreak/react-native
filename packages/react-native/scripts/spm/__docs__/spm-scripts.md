@@ -755,7 +755,4 @@ script branches on the exit code:
 
 That split is the whole reason these cases have their own exit code: a transient
 sync hiccup should not break a build that could still succeed, while a missing
-manifest or an out-of-date project should not pass silently. Sync writes its
-stamp only after these checks pass. When the project is out of date, sync also
-removes the earlier stamp, so every following build fails the same way until the
-project is updated.
+manifest or an out-of-date project should not pass silently.

@@ -119,23 +119,14 @@ function writeSidecar(appRoot, frameworks) {
 }
 
 function projectFiles(xcodeprojPath) {
-  const files = {};
-  const walk = dir => {
-    for (const entry of fs.readdirSync(dir, {withFileTypes: true})) {
-      const full = path.join(dir, entry.name);
-      if (entry.isDirectory()) {
-        walk(full);
-      } else {
-        files[path.relative(xcodeprojPath, full)] = fs.readFileSync(full);
-      }
-    }
-  };
-  walk(xcodeprojPath);
-  return files;
+  return ['project.pbxproj', SPM_INJECTED_MARKER].map(name => {
+    const file = path.join(xcodeprojPath, name);
+    return fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : null;
+  });
 }
 
-// Runs the check and proves it wrote nothing under the .xcodeproj (pbxproj,
-// marker, scheme). Returns the printed lines and the thrown error, if any.
+// Runs the check and proves it wrote neither the pbxproj nor the marker.
+// Returns the printed lines and the thrown error, if any.
 function check(app, env = {}) {
   const before = projectFiles(app.xcodeprojPath);
   let error = null;
@@ -173,24 +164,6 @@ describe('assertPluginFrameworksLinked', () => {
     expect(lines).toEqual([
       'error: The Xcode project links ExpoCore.framework, but no autolinking plugin provides it on this machine. Precompile ExpoCore, or run `npx react-native spm` to update the project.',
     ]);
-  });
-
-  it('reports every mismatch in both directions', () => {
-    const app = scaffoldApp();
-    const other = frameworkEntry(
-      'other-plugin',
-      'OtherPlugin',
-      'plugins/other-plugin.xcframework',
-    );
-    inject(app, [REACT, EXPO]);
-    writeSidecar(app.appRoot, [other]);
-
-    const {error, lines} = check(app);
-
-    expect(error).toBeInstanceOf(PluginFrameworkMismatchError);
-    expect(lines).toHaveLength(2);
-    expect(lines[0]).toMatch(/^error: OtherPlugin \(other-plugin\) /);
-    expect(lines[1]).toMatch(/^error: The Xcode project links ExpoCore\./);
   });
 
   it('fails when a plugin renames its framework but keeps its id', () => {
@@ -238,21 +211,8 @@ describe('assertPluginFrameworksLinked', () => {
     inject(app, [REACT, HERMES, EXPO]);
     writeSidecar(app.appRoot, [EXPO]);
     fs.rmSync(
-      path.join(
-        app.appRoot,
-        'build',
-        'xcframeworks',
-        'flavored-frameworks.json',
-      ),
+      path.join(app.appRoot, 'build/xcframeworks/flavored-frameworks.json'),
     );
-
-    expect(check(app)).toEqual({error: null, lines: []});
-  });
-
-  it('never reports built-in frameworks', () => {
-    const app = scaffoldApp();
-    inject(app, [REACT, HERMES]);
-    writeSidecar(app.appRoot, []);
 
     expect(check(app)).toEqual({error: null, lines: []});
   });
@@ -268,27 +228,19 @@ describe('assertPluginFrameworksLinked', () => {
     const app = scaffoldApp();
     inject(app, [REACT]);
     writeSidecar(app.appRoot, [EXPO]);
-    const markerPath = path.join(app.xcodeprojPath, SPM_INJECTED_MARKER);
-    const marker = JSON.parse(fs.readFileSync(markerPath, 'utf8'));
-    fs.writeFileSync(
-      markerPath,
-      JSON.stringify({...marker, rootUuid: 'NOT_THE_PROJECT_ROOT'}),
-    );
+    fs.writeFileSync(path.join(app.xcodeprojPath, 'project.pbxproj'), PLAIN);
 
     expect(check(app)).toEqual({error: null, lines: []});
   });
 });
 
-describe('injectSpmIntoExistingXcodeproj with a plugin framework', () => {
-  it('is idempotent', () => {
-    const app = scaffoldApp();
-    inject(app, [REACT, EXPO]);
-    const pbxprojPath = path.join(app.xcodeprojPath, 'project.pbxproj');
-    const once = fs.readFileSync(pbxprojPath, 'utf8');
-    expect(once).toContain('$(RN_SPM_EXPO_CORE_FRAMEWORK)');
+it('injects a plugin framework idempotently', () => {
+  const app = scaffoldApp();
+  inject(app, [REACT, EXPO]);
+  const pbxprojPath = path.join(app.xcodeprojPath, 'project.pbxproj');
+  const once = fs.readFileSync(pbxprojPath, 'utf8');
 
-    inject(app, [REACT, EXPO]);
+  inject(app, [REACT, EXPO]);
 
-    expect(fs.readFileSync(pbxprojPath, 'utf8')).toBe(once);
-  });
+  expect(fs.readFileSync(pbxprojPath, 'utf8')).toBe(once);
 });

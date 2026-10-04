@@ -2231,7 +2231,7 @@ function readScriptPhasesManifest(
  */
 function readMarker(
   xcodeprojPath /*: string */,
-) /*: ?{rootUuid?: ?string, targetUuid?: ?string, generatedSources?: {[string]: Array<string>}, scriptPhases?: {[string]: string}, artifactsVersionOverride?: ?string, configCommand?: ?Array<string>, buildSettingChanges?: Array<BuildSettingChange>, createdArrayFields?: Array<CreatedArrayField>, scheme?: {file?: ?string, created?: ?boolean}, ...} */ {
+) /*: ?{targetUuid?: ?string, generatedSources?: {[string]: Array<string>}, scriptPhases?: {[string]: string}, artifactsVersionOverride?: ?string, configCommand?: ?Array<string>, buildSettingChanges?: Array<BuildSettingChange>, createdArrayFields?: Array<CreatedArrayField>, scheme?: {file?: ?string, created?: ?boolean}, ...} */ {
   const markerPath = path.join(xcodeprojPath, SPM_INJECTED_MARKER);
   try {
     // $FlowFixMe[incompatible-return] JSON.parse returns any
@@ -2277,17 +2277,9 @@ class PluginFrameworkMismatchError extends Error {
   }
 }
 
-function pbxListValues(list /*: string */) /*: Array<string> */ {
-  return (list.match(/"(?:[^"\\]|\\.)*"|[^\s,()"]+/g) ?? []).map(unquotePlist);
-}
-
 /**
- * Compares the precompiled frameworks autolinking plugins provide on this
- * machine with the plugin frameworks the injected project links. Only `spm
- * add` / `spm update` change what the project links, so the build-time sync
- * reports a mismatch instead of fixing it: one `error:` line per framework,
- * then PluginFrameworkMismatchError. Never writes the project. Checks the
- * project Xcode is building (`PROJECT_FILE_PATH`) when it is injected.
+ * Only `spm add` / `spm update` change what the project links, so the
+ * build-time sync reports a plugin framework mismatch instead of fixing it.
  */
 function assertPluginFrameworksLinked(
   appRoot /*: string */,
@@ -2300,15 +2292,17 @@ function assertPluginFrameworksLinked(
     fs.existsSync(path.join(builtProjectPath, SPM_INJECTED_MARKER))
       ? builtProjectPath
       : findInjectedXcodeproj(appRoot);
-  const rootUuid =
-    xcodeprojPath != null ? readMarker(xcodeprojPath)?.rootUuid : null;
-  if (xcodeprojPath == null || rootUuid == null) {
+  if (xcodeprojPath == null) {
     return;
   }
   const text = fs.readFileSync(
     path.join(xcodeprojPath, 'project.pbxproj'),
     'utf8',
   );
+  const rootUuid = findProjectObject(text)?.uuid;
+  if (rootUuid == null) {
+    return;
+  }
   const embedPhase = findObjectByUuid(
     text,
     namespacedUUID(
@@ -2321,14 +2315,10 @@ function assertPluginFrameworksLinked(
     return;
   }
 
-  const inputs = pbxListValues(
-    findField(text, embedPhase, 'inputPaths')?.value ?? '',
-  );
-  const outputs = pbxListValues(
-    findField(text, embedPhase, 'outputPaths')?.value ?? '',
-  );
+  const inputs = findField(text, embedPhase, 'inputPaths')?.value ?? '';
+  const outputs = findField(text, embedPhase, 'outputPaths')?.value ?? '';
   const linkedPrefixes = new Set(
-    inputs.map(input => /^\$\((RN_SPM_\w+)_FRAMEWORK\)$/.exec(input)?.[1]),
+    Array.from(inputs.matchAll(/\$\((RN_SPM_\w+)_FRAMEWORK\)/g), m => m[1]),
   );
   // Built-in framework names come from the staged manifest. Without it, only
   // setting prefixes are compared: a missing manifest is not a plugin mismatch.
@@ -2345,9 +2335,10 @@ function assertPluginFrameworksLinked(
         .map(framework => framework.frameworkName),
     );
     linkedPluginNames = new Set(
-      outputs
-        .map(output => path.basename(output, '.framework'))
-        .filter(name => !builtinNames.has(name)),
+      Array.from(
+        outputs.matchAll(/([^/"\s]+)\.framework\b/g),
+        m => m[1],
+      ).filter(name => !builtinNames.has(name)),
     );
   }
 

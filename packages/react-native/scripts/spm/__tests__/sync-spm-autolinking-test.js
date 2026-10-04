@@ -10,6 +10,7 @@
 
 'use strict';
 
+const {PluginFrameworkMismatchError} = require('../generate-spm-xcodeproj');
 const {main} = require('../sync-spm-autolinking');
 const fs = require('node:fs');
 const os = require('node:os');
@@ -38,6 +39,7 @@ describe('sync-spm-autolinking main', () => {
       generateAutolinking: jest.fn(),
       installSpmCodegenTemplate: jest.fn(),
       buildPerAppHeaderTree: jest.fn(),
+      assertPluginFrameworksLinked: jest.fn(),
       findProjectRoot: jest.fn(() => appRoot),
       // Obsolete collaborators are deliberately supplied to prove sync does
       // not download artifacts or regenerate the runtime package graph.
@@ -91,6 +93,7 @@ describe('sync-spm-autolinking main', () => {
       appRoot,
       expect.any(Object),
     );
+    expect(deps.assertPluginFrameworksLinked).toHaveBeenCalledWith(appRoot);
     expect(deps.downloadArtifacts).not.toHaveBeenCalled();
     expect(deps.generatePackage).not.toHaveBeenCalled();
     expect(fs.existsSync(stampPath())).toBe(true);
@@ -131,6 +134,22 @@ describe('sync-spm-autolinking main', () => {
     expect(
       deps.installSpmCodegenTemplate.mock.invocationCallOrder[0],
     ).toBeLessThan(deps.generateAutolinking.mock.invocationCallOrder[0]);
+    expect(fs.existsSync(stampPath())).toBe(false);
+  });
+
+  // No stamp on a mismatch, so the next build re-runs sync and fails again
+  // until the project is updated.
+  it('fails without a stamp when plugin frameworks and the project disagree', async () => {
+    const mismatch = new PluginFrameworkMismatchError();
+    const deps = makeDeps({
+      assertPluginFrameworksLinked: jest.fn(() => {
+        throw mismatch;
+      }),
+    });
+    await expect(run(deps)).rejects.toBe(mismatch);
+    expect(deps.generateAutolinking.mock.invocationCallOrder[0]).toBeLessThan(
+      deps.assertPluginFrameworksLinked.mock.invocationCallOrder[0],
+    );
     expect(fs.existsSync(stampPath())).toBe(false);
   });
 });

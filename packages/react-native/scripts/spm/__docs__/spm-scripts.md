@@ -595,6 +595,8 @@ across apps; refresh it with `react-native spm update --download force`.
 | `spm add` fails: "no .xcodeproj found"                                                                                 | Create an app first (`npx @react-native-community/cli init`) or make a project in Xcode, then `spm add`.                                                                                                                                                                                                                                                    |
 | `spm add` fails: "multiple .xcodeproj found"                                                                           | Pass `--xcodeproj <path>` (and `--product-name <target>` if multiple app targets).                                                                                                                                                                                                                                                                          |
 | `Package.swift is missing for library "<name>"` (exit 2)                                                               | The dep ships no SwiftPM support. `npx react-native spm scaffold`, then re-run setup; persist with `patch-package`. See [Community packages without a Package.swift](#community-packages-without-a-packageswift)                                                                                                                                            |
+| `<Name> (<id>) is a precompiled framework from an autolinking plugin, but the Xcode project does not link it` (exit 2) | A plugin provides a framework that the project was not set up for. Run `npx react-native spm` to update the project.                                                                                                                                                                                                                                        |
+| `The Xcode project links <Name>.framework, but no autolinking plugin provides it on this machine` (exit 2)             | The project was set up on a machine where a plugin provided the framework. Precompile it on this machine, or run `npx react-native spm` to update the project.                                                                                                                                                                                              |
 | `SPM Swift name collision`                                                                                             | Two libraries resolved to one Swift name, or one took a name React Native reserves. Set `swiftpmConfig.name` in the library's package.json — see [Library names](#library-names)                                                                                                                                                                            |
 | Missing headers                                                                                                        | Re-run `react-native spm`                                                                                                                                                                                                                                                                                                                                   |
 | "not contained in target"                                                                                              | Re-run setup (regenerates file-level symlinks)                                                                                                                                                                                                                                                                                                              |
@@ -738,15 +740,21 @@ clean checkout; it is not something either hook can work around.
 A sync failure is lenient by default but **not unconditionally**. The generated
 script branches on the exit code:
 
-- **Exit 2** — an autolinked dependency ships no `Package.swift`. This **fails
-  the build** (`exit 1`), deliberately: the autolinker has already printed an
-  `error:` line per dep, and the fix needs a terminal (see
-  [Community packages without a Package.swift](#community-packages-without-a-packageswift)).
+- **Exit 2** — a problem that only a terminal command fixes. This **fails the
+  build** (`exit 1`), deliberately: sync has already printed `error:` lines that
+  name the command. Two cases use it:
+  - An autolinked dependency ships no `Package.swift` (see
+    [Community packages without a Package.swift](#community-packages-without-a-packageswift)).
+  - The precompiled frameworks that autolinking plugins provide differ from the
+    frameworks that the Xcode project links (see
+    [Troubleshooting](#troubleshooting)).
 - **Any other non-zero exit** — emits
   `warning: SPM sync failed — build may use stale codegen/autolinking` and lets
   the build continue, so an already-generated package graph can still produce a
   successful build.
 
-That split is the whole reason the missing-manifest case has its own exit code:
-a transient sync hiccup should not break a build that could still succeed, while
-a genuinely missing manifest should not pass silently.
+That split is the whole reason these cases have their own exit code: a transient
+sync hiccup should not break a build that could still succeed, while a missing
+manifest or an out-of-date project should not pass silently. Sync writes its
+stamp only after these checks pass, so every following build fails the same way
+until the problem is fixed.

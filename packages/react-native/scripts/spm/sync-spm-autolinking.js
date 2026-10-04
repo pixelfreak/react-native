@@ -31,7 +31,9 @@
  *      call site)
  *   2. Calls generate-spm-autolinking.js → build/generated/autolinking/Package.swift
  *   3. Rebuilds the generated-headers farm
- *   4. Writes build/generated/autolinking/.spm-sync-stamp
+ *   4. Fails when the Xcode project does not link exactly the precompiled
+ *      frameworks autolinking plugins provide (only `spm update` fixes that)
+ *   5. Writes build/generated/autolinking/.spm-sync-stamp
  *
  * Runtime frameworks are deliberately not downloaded or regenerated from an
  * Xcode build. `spm add` / `spm update` own the immutable dual-flavor slots and
@@ -39,6 +41,7 @@
  */
 
 const {main: generateAutolinking} = require('./generate-spm-autolinking');
+const {assertPluginFrameworksLinked} = require('./generate-spm-xcodeproj');
 const {
   RemoteVersionError,
   buildPerAppHeaderTree,
@@ -62,6 +65,7 @@ const defaultDeps = {
   generateAutolinking,
   installSpmCodegenTemplate,
   buildPerAppHeaderTree,
+  assertPluginFrameworksLinked,
   findProjectRoot,
 };
 
@@ -130,6 +134,8 @@ async function main(
     autolinkingArgv.push('--ios-deployment-target', iosDeploymentTarget);
   }
   deps.generateAutolinking(autolinkingArgv);
+  // Before the stamp, so every build fails until the project is updated.
+  deps.assertPluginFrameworksLinked(appRoot);
 
   // Rebuild the per-app generated-headers farm (vended as the ReactAppHeaders
   // SPM target inside the codegen package). React core headers need no trees

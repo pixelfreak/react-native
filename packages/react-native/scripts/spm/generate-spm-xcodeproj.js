@@ -21,7 +21,11 @@
  * by `spm deinit`). Consumed as a library by setup-apple-spm.js; not a CLI.
  */
 
-const {readFlavoredFrameworksManifest} = require('./flavored-frameworks');
+const {
+  BUILTIN_FRAMEWORKS,
+  readFlavoredFrameworksManifest,
+  readPluginFrameworks,
+} = require('./flavored-frameworks');
 const {parseConfigCommandJson} = require('./generate-spm-autolinking-config');
 const {
   addArrayMembers,
@@ -817,7 +821,7 @@ if [ "$STALE" -eq 1 ]; then
   cd "$SRCROOT"
   # \`|| RC=$?\` so a non-zero exit is CAPTURED rather than aborting the phase
   # under \`set -e\` — the whole point is to branch on the code below (2 = fail
-  # the build with a scaffold hint; other non-zero = warn but don't break).
+  # the build; other non-zero = warn but don't break).
   RC=0
   if [ -n "$NODE_BINARY" ] && [ -f "$RN_DIR/scripts/setup-apple-spm.js" ]; then
     # Direct, dependency-free dispatch (no \`npx react-native\`, which needs
@@ -829,10 +833,10 @@ if [ "$STALE" -eq 1 ]; then
     echo "warning: node/npx not found — skipping SPM sync"
   fi
   if [ "$RC" -eq 2 ]; then
-    # Exit 2 = an autolinked community dependency has no Package.swift. The
-    # autolinker already printed an \`error:\` line per dep (so Xcode shows them
-    # and the fix). Fail the build — the developer must run
-    # \`npx react-native spm scaffold\` from a terminal to generate the manifest.
+    # Exit 2 = a problem only a terminal command fixes (e.g. a dependency
+    # without Package.swift, or plugin frameworks the project does not link).
+    # Sync already printed \`error:\` lines that name the command, so Xcode
+    # shows them. Fail the build.
     exit 1
   elif [ "$RC" -ne 0 ]; then
     echo "warning: SPM sync failed — build may use stale codegen/autolinking"
@@ -2226,7 +2230,7 @@ function readScriptPhasesManifest(
  */
 function readMarker(
   xcodeprojPath /*: string */,
-) /*: ?{targetUuid?: ?string, generatedSources?: {[string]: Array<string>}, scriptPhases?: {[string]: string}, artifactsVersionOverride?: ?string, configCommand?: ?Array<string>, buildSettingChanges?: Array<BuildSettingChange>, createdArrayFields?: Array<CreatedArrayField>, scheme?: {file?: ?string, created?: ?boolean}, ...} */ {
+) /*: ?{rootUuid?: ?string, targetUuid?: ?string, generatedSources?: {[string]: Array<string>}, scriptPhases?: {[string]: string}, artifactsVersionOverride?: ?string, configCommand?: ?Array<string>, buildSettingChanges?: Array<BuildSettingChange>, createdArrayFields?: Array<CreatedArrayField>, scheme?: {file?: ?string, created?: ?boolean}, ...} */ {
   const markerPath = path.join(xcodeprojPath, SPM_INJECTED_MARKER);
   try {
     // $FlowFixMe[incompatible-return] JSON.parse returns any
@@ -2260,6 +2264,97 @@ function findInjectedXcodeproj(appRoot /*: string */) /*: string | null */ {
     }
   }
   return null;
+}
+
+class PluginFrameworkMismatchError extends Error {
+  constructor() {
+    super(
+      'The Xcode project does not link the frameworks autolinking plugins ' +
+        'provide. Run `npx react-native spm` to update the project.',
+    );
+    this.name = 'PluginFrameworkMismatchError';
+  }
+}
+
+function pbxListValues(list /*: string */) /*: Array<string> */ {
+  return (list.match(/"(?:[^"\\]|\\.)*"|[^\s,()"]+/g) ?? []).map(unquotePlist);
+}
+
+/**
+ * Compares the precompiled frameworks autolinking plugins provide on this
+ * machine with the plugin frameworks the injected project links. Only `spm
+ * add` / `spm update` change what the project links, so the build-time sync
+ * reports a mismatch instead of fixing it: one `error:` line per framework,
+ * then PluginFrameworkMismatchError. Never writes the project.
+ */
+function assertPluginFrameworksLinked(appRoot /*: string */) /*: void */ {
+  const xcodeprojPath = findInjectedXcodeproj(appRoot);
+  const rootUuid =
+    xcodeprojPath != null ? readMarker(xcodeprojPath)?.rootUuid : null;
+  if (xcodeprojPath == null || rootUuid == null) {
+    return;
+  }
+  const text = fs.readFileSync(
+    path.join(xcodeprojPath, 'project.pbxproj'),
+    'utf8',
+  );
+  const embedPhase = findObjectByUuid(
+    text,
+    namespacedUUID(
+      rootUuid,
+      'PBXShellScriptBuildPhase',
+      'EmbedFlavoredFrameworks',
+    ),
+  );
+  if (embedPhase == null) {
+    return;
+  }
+
+  const inputs = pbxListValues(
+    findField(text, embedPhase, 'inputPaths')?.value ?? '',
+  );
+  const outputs = pbxListValues(
+    findField(text, embedPhase, 'outputPaths')?.value ?? '',
+  );
+  const builtinPrefixes = new Set(
+    BUILTIN_FRAMEWORKS.map(framework => frameworkSettingPrefix(framework.id)),
+  );
+  const linkedPluginNames /*: Map<string, string> */ = new Map();
+  inputs
+    .map(input => /^\$\((RN_SPM_\w+)_FRAMEWORK\)$/.exec(input)?.[1])
+    .filter(Boolean)
+    .forEach((prefix, index) => {
+      if (!builtinPrefixes.has(prefix)) {
+        linkedPluginNames.set(
+          prefix,
+          path.basename(outputs[index] ?? prefix, '.framework'),
+        );
+      }
+    });
+
+  const pluginFrameworks = readPluginFrameworks(appRoot);
+  const pairedPrefixes = new Set(
+    pluginFrameworks.map(framework => frameworkSettingPrefix(framework.id)),
+  );
+  const problems /*: Array<string> */ = [];
+  for (const {id, frameworkName} of pluginFrameworks) {
+    if (!linkedPluginNames.has(frameworkSettingPrefix(id))) {
+      problems.push(
+        `error: ${frameworkName} (${id}) is a precompiled framework from an autolinking plugin, but the Xcode project does not link it. Run \`npx react-native spm\` to update the project.`,
+      );
+    }
+  }
+  for (const [prefix, frameworkName] of linkedPluginNames) {
+    if (!pairedPrefixes.has(prefix)) {
+      problems.push(
+        `error: The Xcode project links ${frameworkName}.framework, but no autolinking plugin provides it on this machine. Precompile ${frameworkName}, or run \`npx react-native spm\` to update the project.`,
+      );
+    }
+  }
+  if (problems.length > 0) {
+    problems.forEach(problem => console.error(problem));
+    throw new PluginFrameworkMismatchError();
+  }
 }
 
 /**
@@ -2782,5 +2877,7 @@ module.exports = {
   readArtifactsVersionOverride,
   readPinnedConfigCommand,
   readScriptPhasesManifest,
+  assertPluginFrameworksLinked,
+  PluginFrameworkMismatchError,
   SPM_INJECTED_MARKER,
 };

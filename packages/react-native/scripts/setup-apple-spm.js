@@ -93,6 +93,7 @@ const {
 const {main: generatePackage} = require('./spm/generate-spm-package');
 const {findSourcePath} = require('./spm/generate-spm-package');
 const {
+  PluginFrameworkMismatchError,
   SPM_INJECTED_MARKER,
   cleanupDanglingJavaScriptCoreRef,
   cleanupLeftoverPodsGroup,
@@ -1200,8 +1201,11 @@ async function main(argv /*:: ?: Array<string> */) /*: Promise<void> */ {
         iosDeploymentTarget,
       ]);
     } catch (e) {
-      if (e instanceof MissingManifestError) {
-        // The per-dep `error:` lines were already printed by the autolinker.
+      if (
+        e instanceof MissingManifestError ||
+        e instanceof PluginFrameworkMismatchError
+      ) {
+        // The `error:` lines were already printed.
         // Exit 2 (distinct from generic failure) so the Xcode build phase can
         // turn this into a hard build error while staying lenient on transient
         // sync failures.

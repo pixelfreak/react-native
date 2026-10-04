@@ -130,8 +130,10 @@ The declarations are recorded to
 `<outputDir>/.spm-plugin-flavored-frameworks.json`, normalized into the same
 immutable app-local slots as React Native, and added to Xcode's exact linker and
 embed settings. They are not emitted as SwiftPM product dependencies. Adding or
-removing one requires `spm update`; the build-time `spm sync` intentionally does
-not mutate runtime framework settings.
+removing one requires `npx react-native spm`. The build-time `spm sync` never
+changes the Xcode project. When the frameworks that plugins provide and the
+frameworks that the project links disagree, sync fails the build. An `error:`
+line names each framework and the command to run.
 
 ### `watchPaths` — plugin staleness inputs
 
@@ -349,9 +351,10 @@ green build missing native code) is worse than a loud stop.
   on the app target at the requested position, recording the id→UUID map in the
   `.spm-injected.json` marker so a re-run refreshes each phase's content in
   place, re-seats it when its declared position or order changed, `update`
-  removes phases that left the sidecar, and `deinit` reverts them. Like
-  `flavoredFrameworks`, the build-time `sync` only rewrites the sidecar; it
-  never mutates the project.
+  removes phases that left the sidecar, and `deinit` reverts them. The
+  build-time `sync` only rewrites the sidecar; it never mutates the project.
+  (For `flavoredFrameworks`, it also fails the build when the project is out of
+  date.)
 - **Co-design with Expo (not final):** codegen **provider ordering** — codegen
   must consume the same discovered module set the plugin contributes — is
   intentionally left for the first real plugin to drive to a stable shape.

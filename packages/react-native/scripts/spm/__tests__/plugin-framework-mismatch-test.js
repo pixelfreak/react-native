@@ -206,6 +206,15 @@ describe('assertPluginFrameworksLinked', () => {
     expect(check(app)).toEqual({error: null, lines: []});
   });
 
+  it('reads framework names that contain a space', () => {
+    const app = scaffoldApp();
+    const spaced = frameworkEntry('my-fw', 'My Fw', 'My Fw.xcframework');
+    inject(app, [REACT, HERMES, spaced]);
+    writeSidecar(app.appRoot, [spaced]);
+
+    expect(check(app)).toEqual({error: null, lines: []});
+  });
+
   it('compares only setting prefixes when the frameworks manifest is missing', () => {
     const app = scaffoldApp();
     inject(app, [REACT, HERMES, EXPO]);

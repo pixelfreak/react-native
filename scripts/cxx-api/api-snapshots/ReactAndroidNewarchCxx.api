@@ -5380,9 +5380,9 @@ struct facebook::react::VirtualViewEventEmitter::OnModeChangeThresholdRect {
 class facebook::react::VirtualViewProps : public facebook::react::HostPlatformViewProps {
   public VirtualViewProps() = default;
   public VirtualViewProps(const facebook::react::PropsParserContext& context, const facebook::react::VirtualViewProps& sourceProps, const facebook::react::RawProps& rawProps);
-  public bool initialHidden;
   public bool removeClippedSubviews;
   public int renderState;
+  public std::optional<bool> initialHidden;
   public virtual facebook::react::ComponentName getDiffPropsImplementationTarget() const override;
   public virtual folly::dynamic getDiffProps(const facebook::react::Props* prevProps) const override;
 }
